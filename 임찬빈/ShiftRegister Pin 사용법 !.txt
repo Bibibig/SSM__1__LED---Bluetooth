@@ -1,0 +1,60 @@
+int dataPin = 8; //pin 14 of 74HC595
+int holdPin = 10; // pin 12 of 74HC595
+int shiftPin = 11; // pin 11 of 74HC595
+
+void setup() {
+  pinMode(dataPin, OUTPUT);
+  pinMode(holdPin, OUTPUT);
+  pinMode(shiftPin, OUTPUT);
+  
+  digitalWrite(holdPin, LOW);    //신호를 보낼게 !!
+ 
+  digitalWrite(shiftPin, LOW);
+  digitalWrite(dataPin, 1);       ----->
+  digitalWrite(shiftPin, HIGH);
+ 
+  digitalWrite(shiftPin, LOW);
+  digitalWrite(dataPin, 0);      ------>
+  digitalWrite(shiftPin, HIGH);
+ 
+  digitalWrite(shiftPin, LOW);
+  digitalWrite(dataPin, 1);      ------>  
+  digitalWrite(shiftPin, HIGH);
+ 
+  digitalWrite(shiftPin, LOW);
+  digitalWrite(dataPin, 0);      ------> 
+  digitalWrite(shiftPin, HIGH);
+ 
+  digitalWrite(shiftPin, LOW);
+  digitalWrite(dataPin, 1);      ------>  
+  digitalWrite(shiftPin, HIGH);
+ 
+  digitalWrite(shiftPin, LOW);
+  digitalWrite(dataPin, 0);      ------>  
+  digitalWrite(shiftPin, HIGH);
+ 
+  digitalWrite(shiftPin, LOW);
+  digitalWrite(dataPin, 1);      ------>
+  digitalWrite(shiftPin, HIGH);
+ 
+  digitalWrite(shiftPin, LOW);
+  digitalWrite(dataPin, 0);      ------> 
+  digitalWrite(shiftPin, HIGH);
+ 
+  digitalWrite(holdPin, HIGH);   //신호 다 보냈어 !!
+}
+
+void loop() {
+  //nothing
+}
+
+위에서부터 순차적으로 10101010 을 하나씩 집어넣어 쉬프트 레지스터니까 !
+
+
+전체 과정 은
+
+holdPin 으로 신호 보낸다고 하고
+
+SshiftPin Low 와 HIGH 사이에 값을 넣어.
+
+이과정은 ShiftPin 값 사이에 있으니까 넣고 바로 밀리는거야
