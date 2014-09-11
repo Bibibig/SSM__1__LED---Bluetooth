@@ -1,0 +1,699 @@
+TipsDrawableActivity
+
+package com.example.led_board;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothSocket;
+import android.content.DialogInterface;
+import android.content.Intent;
+import android.os.Bundle;
+import android.os.Handler;
+import android.util.Log;
+import android.view.MotionEvent;
+import android.view.View;
+import android.view.View.OnClickListener;
+import android.view.View.OnTouchListener;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.ImageButton;
+import android.widget.Toast;
+
+//Activity 클래스를 상속받은 사용자 정의 액티비티에 OnTouchListener 를 구현한다.
+public class TipsDrawableActivity extends Activity implements OnTouchListener {
+	private final static int tipsWidth = 32;
+	private final static int tipsHeight = 16;
+
+	private TipsView m_tips_view = null; // 터치 위치에 원이 그려지는 사용자 정의 뷰
+	private static int[][] visitedArr = new int[tipsHeight][tipsWidth]; // 터치
+																		// 위치의
+																		// 좌표에
+																		// 사각형이
+																		// 그려지는
+
+	private static ArrayList<Vertex> arVertex;
+	private static ArrayList<Vertex> arVertexDel;
+	private static boolean ControlFlag = true;
+
+	private int TipsViewX;
+	private int TipsViewY;
+	private int TipsPartX;
+	private int TipsPartY;
+
+	private int ff;
+
+	private String msg;
+
+	private ImageButton mButtonSend;
+	private ImageButton btn; // bluetooth
+	private ImageButton leftBtn, rightBtn, fire1Btn, fire2Btn, fire3Btn,
+			penBtn, eraseBtn;
+
+	// BlueTooth
+	private int[] sendArr = new int[tipsHeight * tipsWidth];
+	int mPairedDeviceCount = 0;
+	Set<BluetoothDevice> mDevices;
+	BluetoothDevice mRemoteDevice;
+	BluetoothSocket mSocket = null;
+	OutputStream mOutputStream = null;
+	InputStream mInputStream = null;
+	Thread mWorkerThread = null;
+	String mStrDelimiter = "\n";
+	char mCharDelimiter = '\n';
+	byte[] readBuffer;
+	int readBufferPosition;
+	private Set<BluetoothDevice> pairedDevices;
+	private EditText mEditReceive;
+	private EditText mEditSend;
+
+	@Override
+	public void onCreate(Bundle savedInstanceState) {
+		super.onCreate(savedInstanceState);
+		setContentView(R.layout.activity_main);
+
+		// 리소스 파일에 정의된 id_view 라는 ID 의 사용자정의뷰를 얻어온다.
+		m_tips_view = (TipsView) findViewById(R.id.id_view);
+		mEditReceive = (EditText) findViewById(R.id.receiveString);
+		mEditSend = (EditText) findViewById(R.id.sendString);
+		leftBtn = (ImageButton) findViewById(R.id.leftBtn);
+		rightBtn = (ImageButton) findViewById(R.id.rightBtn);
+		fire1Btn = (ImageButton) findViewById(R.id.fire1Btn);
+		fire2Btn = (ImageButton) findViewById(R.id.fire2Btn);
+		fire3Btn = (ImageButton) findViewById(R.id.fire3Btn);
+		penBtn = (ImageButton) findViewById(R.id.penBtn);
+		eraseBtn = (ImageButton) findViewById(R.id.eraseBtn);
+
+		arVertex = new ArrayList<Vertex>();
+		arVertexDel = new ArrayList<Vertex>();
+
+		// 사용자정의 뷰에 이 클래스에서 구현한 리스너를 등록한다.
+		m_tips_view.setOnTouchListener(this);
+
+		new Handler().postDelayed(new Runnable() {
+
+			@Override
+			public void run() {
+				// TODO Auto-generated method stub
+				TipsViewX = m_tips_view.getTipsViewX();
+				TipsViewY = m_tips_view.getTipsViewY();
+				TipsPartX = TipsViewX / tipsWidth;
+				TipsPartY = TipsViewY / tipsHeight;
+
+				for (int x = 0; x < tipsWidth; x++) {
+					for (int y = 0; y < tipsHeight; y++) {
+						Vertex vertex = new Vertex(x * TipsPartX,
+								y * TipsPartY, true);
+						arVertexDel.add(vertex);
+					}
+				}
+
+				m_tips_view.onBackgroundDraw();
+				m_tips_view.invalidate();
+			}
+
+		}, 1000);
+
+		changeEffectButtonImage(R.id.leftBtn);
+		chageBrushButtonImage(R.id.penBtn);
+	}
+
+	// 요기서부터 추가!블루투스 !
+	BluetoothAdapter mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+	private static final int REQUEST_ENABLE_BT = 3;
+
+	void checkBluetooth() {
+		mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+		
+		if (mBluetoothAdapter == null)	// 장치가 블루투스 지원 안 하는 경우 !! 
+		{
+			Toast.makeText(this, "블루투스 미지원 장치입니다.", Toast.LENGTH_SHORT).show();
+			finish();
+		} 
+		else
+		{
+			if (!mBluetoothAdapter.isEnabled()) 
+			{
+				// 블루가 지원가능하지만 비활성 상태인경우 블투 활성상태로 바꾸기 위해 사용자 동의 요청
+				
+				Intent enableBtlntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+				startActivityForResult(enableBtlntent, REQUEST_ENABLE_BT);
+
+				// onActivityResult(REQUEST_ENABLE_BT,
+				// RESULT_OK,enableBtlntent);
+			} else {
+				selectDevice();
+				// Set<BluetoothDevice> pairedDevices =
+				// mBluetoothAdapter.getBondedDevices();
+
+				// 블투 지원하며 활성 상태인 경우
+				// 페어링 된 기기 목록을 보여주고 연결할 장치를 선택
+			}
+		}
+	}
+
+	void selectDevice() {
+
+		mDevices = mBluetoothAdapter.getBondedDevices();
+		mPairedDeviceCount = mDevices.size();
+
+		if (mPairedDeviceCount == 0) {
+			Toast.makeText(this, "페어링된 장치가 없습니다.", Toast.LENGTH_SHORT).show();
+			// 페어링 된 장치가 없는 경우
+			finish();
+		}
+		
+		AlertDialog.Builder builder = new AlertDialog.Builder(this);
+		builder.setTitle("블루투스 장치 선택");
+		// 페어링 된 블루투스 장치의 이름 목록 작성
+		List<String> listItems = new ArrayList<String>();
+		for (BluetoothDevice device : mDevices) {
+			listItems.add(device.getName());
+		}
+		
+		listItems.add("취소"); // 취소 항목 추가
+		
+		final CharSequence[] items = listItems.toArray(new CharSequence[listItems.size()]);
+
+		builder.setItems(items, new DialogInterface.OnClickListener() {
+
+			@Override
+			public void onClick(DialogInterface dialog, int item) {
+				if (item == mPairedDeviceCount) { // 연결할 장치를 선택하지 않고 '취소'를 누른 경우
+					Toast.makeText(getApplicationContext(), "연결할 장치를 선택해주세요.", Toast.LENGTH_SHORT).show();
+				} else {// 연결할 장치를 선택한 경우
+						// 선택한 장치와 연결을 시도함
+					connetToSelectedDevice(items[item].toString());
+				}
+
+			}
+		});
+
+		//builder.setCancelable(false); // 뒤로가기 버튼 사용 금지
+		AlertDialog alert = builder.create();
+		alert.show();
+	}
+
+	void connetToSelectedDevice(String selectedDeviceName) {
+		mRemoteDevice = getDeviceFromBondedList(selectedDeviceName);
+		UUID uuid = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb");
+
+		try {
+			// 소켓 생성
+			mSocket = mRemoteDevice.createRfcommSocketToServiceRecord(uuid);
+			// RFCOMM 채널을 통한 연결
+			mSocket.connect();
+
+			// 데이터 송수신을 위한 스트림 얻기
+			mOutputStream = mSocket.getOutputStream();
+			mInputStream = mSocket.getInputStream();
+
+			// 데이터 수신 준비
+			beginListenForData();
+			Toast.makeText(this, "블루투스가 연결되었습니다.", Toast.LENGTH_SHORT).show();
+		} catch (Exception e) {// 블루투스 연결 중 오류 발생
+			Toast.makeText(this, "블루투스 연결을 실패하였습니다.", Toast.LENGTH_SHORT).show();
+		}
+	}
+
+	@Override
+	protected void onDestroy() {
+		try {
+			mWorkerThread.interrupt(); // 데이터 수신 쓰레드 종료
+			mInputStream.close();
+			mOutputStream.close();
+			mSocket.close();
+		} catch (Exception e) {
+		}
+		super.onDestroy();
+	}
+
+	void sendData(String msg) {
+
+		if (ff == 1) {
+
+			msg = (int) sendArr[0] + "a" + (int) sendArr[1] + "a"
+					+ (int) sendArr[2] + "a" + (int) sendArr[3] + "a"
+					+ (int) sendArr[4] + "a" + (int) sendArr[5] + "a"
+					+ (int) sendArr[6] + "a" + (int) sendArr[7] + "a"
+					+ (int) sendArr[8] + "a" + (int) sendArr[9] + "a"
+					+ (int) sendArr[10] + "a" + (int) sendArr[11] + "a"
+					+ (int) sendArr[12] + "a" + (int) sendArr[13] + "a"
+					+ (int) sendArr[14] + "a" + (int) sendArr[15] + "a";
+
+			try {
+
+				mOutputStream.write(msg.getBytes());
+				mOutputStream.flush();
+				Log.d("msg1", msg);
+
+			} catch (Exception e) {// 문자열 전송 도중 오류가 발생한 경우
+				Toast.makeText(getApplicationContext(), "데이터 전송 중 오류가 발생했습니다.",
+						Toast.LENGTH_SHORT).show();
+				// finish(); //애플리케이션 종료
+			}
+
+		}
+
+		if (ff == 2) {
+			msg = (int) sendArr[16] + "a" + (int) sendArr[17] + "a"
+					+ (int) sendArr[18] + "a" + (int) sendArr[19] + "a"
+					+ (int) sendArr[20] + "a" + (int) sendArr[21] + "a"
+					+ (int) sendArr[22] + "a" + (int) sendArr[23] + "a"
+					+ (int) sendArr[24] + "a" + (int) sendArr[25] + "a"
+					+ (int) sendArr[26] + "a" + (int) sendArr[27] + "a"
+					+ (int) sendArr[28] + "a" + (int) sendArr[29] + "a"
+					+ (int) sendArr[30] + "a" + (int) sendArr[31] + "a" ;
+
+			try {
+
+				mOutputStream.write(msg.getBytes());
+				mOutputStream.flush();
+				Log.d("msg2", msg);
+
+			} catch (Exception e) {// 문자열 전송 도중 오류가 발생한 경우
+				Toast.makeText(getApplicationContext(), "데이터 전송 중 오류가 발생했습니다.",
+						Toast.LENGTH_SHORT).show();
+				// finish(); //애플리케이션 종료
+			}
+		}
+
+		if (ff == 3) {
+			msg = (int) sendArr[32] + "a" + (int) sendArr[33] + "a"
+					+ (int) sendArr[34] + "a" + (int) sendArr[35] + "a"
+					+ (int) sendArr[36] + "a" + (int) sendArr[37] + "a"
+					+ (int) sendArr[38] + "a" + (int) sendArr[39] + "a"
+					+ (int) sendArr[40] + "a" + (int) sendArr[41] + "a"
+					+ (int) sendArr[42] + "a" + (int) sendArr[43] + "a"
+					+ (int) sendArr[44] + "a" + (int) sendArr[45] + "a"
+					+ (int) sendArr[46] + "a" + (int) sendArr[47] + "a" ;
+
+			try {
+				mOutputStream.write(msg.getBytes());
+				mOutputStream.flush();
+				Log.d("msg3", msg);
+
+			} catch (Exception e) {// 문자열 전송 도중 오류가 발생한 경우
+				Toast.makeText(getApplicationContext(), "데이터 전송 중 오류가 발생했습니다.",
+						Toast.LENGTH_SHORT).show();
+				// finish(); //애플리케이션 종료
+			}
+
+		}
+		if (ff == 4) {
+			msg = (int) sendArr[48] + "a" + (int) sendArr[49] + "a"
+					+ (int) sendArr[50] + "a" + (int) sendArr[51] + "a"
+					+ (int) sendArr[52] + "a" + (int) sendArr[53] + "a"
+					+ (int) sendArr[54] + "a" + (int) sendArr[55] + "a"
+					+ (int) sendArr[56] + "a" + (int) sendArr[57] + "a"
+					+ (int) sendArr[58] + "a" + (int) sendArr[59] + "a"
+					+ (int) sendArr[60] + "a" + (int) sendArr[61] + "a"
+					+ (int) sendArr[62] + "a" + (int) sendArr[63] + "a" +"e";
+			try {
+				mOutputStream.write(msg.getBytes());
+				mOutputStream.flush();
+				Log.d("msg4", msg);
+				
+			} catch (Exception e) {// 문자열 전송 도중 오류가 발생한 경우
+				Toast.makeText(getApplicationContext(), "데이터 전송 중 오류가 발생했습니다.",
+						Toast.LENGTH_SHORT).show();
+				// finish(); //애플리케이션 종료
+			}
+		}
+
+	}
+
+	void beginListenForData() {
+		final Handler handler = new Handler();
+
+		readBuffer = new byte[1024]; // 수신 버퍼
+		readBufferPosition = 0;
+
+		// 문자열 수신 쓰레드
+		mWorkerThread = new Thread(new Runnable() {
+			public void run() {
+				while (!Thread.currentThread().isInterrupted()) {
+					try {
+						int bytesAvailable = mInputStream.available(); // 수신 데이터
+																		// 확인
+						if (bytesAvailable > 0) // 데이터가 수신된 경우
+						{
+							byte[] packetBytes = new byte[bytesAvailable];
+							mInputStream.read(packetBytes);
+							// Log.i("input", packetBytes);
+							for (int i = 0; i < bytesAvailable; i++) {
+								byte b = packetBytes[i];
+								if (b == mCharDelimiter) {
+									byte[] encodedBytes = new byte[readBufferPosition];
+									System.arraycopy(readBuffer, 0,
+											encodedBytes, 0,
+											encodedBytes.length);
+									final String data = new String(
+											encodedBytes, "US-ASCII");
+									readBufferPosition = 0;
+
+									handler.post(new Runnable() {
+										public void run() {
+											mEditReceive.setText(mEditReceive
+													.getText().toString()
+													+ data + mStrDelimiter);
+											// 수신된 무자열 데이터에 대한 처리 작업.
+										}
+
+									});
+								} else {
+									readBuffer[readBufferPosition++] = b;
+								}
+							}
+						}
+					} catch (IOException e) { // 데이터 송신 중 오류 발생
+						Toast.makeText(getApplicationContext(),
+								"데이터 수신 중 오류가 발생했습니당.", Toast.LENGTH_SHORT)
+								.show();
+					}
+				}
+			}
+
+		});
+
+		mWorkerThread.start();
+	}
+
+	BluetoothDevice getDeviceFromBondedList(String name) {
+		BluetoothDevice selectedDevice = null;
+
+		for (BluetoothDevice device : mDevices) {
+			if (name.equals(device.getName())) {
+				selectedDevice = device;
+				break;
+			}
+		}
+		return selectedDevice;
+	}
+
+	@Override
+	public void onActivityResult(int requestCode, int resultCode, Intent data) {
+		super.onActivityResult(requestCode, resultCode, data);
+		switch (requestCode) {
+		case REQUEST_ENABLE_BT:
+			if (resultCode == Activity.RESULT_OK) {
+				// 블루투스가 활성 상태로 변경됨
+				selectDevice();
+
+			} else if (resultCode == RESULT_CANCELED) {
+				// 블루투스가 비활성 상태임
+				Toast.makeText(this, "블루투스를 활성상태로 변경하여주세요.", Toast.LENGTH_SHORT)
+						.show();
+			}
+			break;
+		}
+	}
+
+	void inputSendArr() {
+		for (int CCount = 0; CCount < 8; CCount++) {
+			sendArr[CCount] = visitedArr[0][CCount] * 128
+					+ visitedArr[1][CCount] * 64 + visitedArr[2][CCount] * 32
+					+ visitedArr[3][CCount] * 16 + visitedArr[4][CCount] * 8
+					+ visitedArr[5][CCount] * 4 + visitedArr[6][CCount] * 2
+					+ visitedArr[7][CCount];
+		}
+
+		for (int CCount = 0; CCount < 8; CCount++) {
+			sendArr[CCount + 8] = visitedArr[8][CCount] * 128
+					+ visitedArr[9][CCount] * 64 + visitedArr[10][CCount] * 32
+					+ visitedArr[11][CCount] * 16 + visitedArr[12][CCount] * 8
+					+ visitedArr[13][CCount] * 4 + visitedArr[14][CCount] * 2
+					+ visitedArr[15][CCount];
+		}
+
+		for (int CCount = 8; CCount < 16; CCount++) {
+			sendArr[CCount + 8] = visitedArr[0][CCount] * 128
+					+ visitedArr[1][CCount] * 64 + visitedArr[2][CCount] * 32
+					+ visitedArr[3][CCount] * 16 + visitedArr[4][CCount] * 8
+					+ visitedArr[5][CCount] * 4 + visitedArr[6][CCount] * 2
+					+ visitedArr[7][CCount];
+		}
+
+		for (int CCount = 8; CCount < 16; CCount++) {
+			sendArr[CCount + 16] = visitedArr[8][CCount] * 128
+					+ visitedArr[9][CCount] * 64 + visitedArr[10][CCount] * 32
+					+ visitedArr[11][CCount] * 16 + visitedArr[12][CCount] * 8
+					+ visitedArr[13][CCount] * 4 + visitedArr[14][CCount] * 2
+					+ visitedArr[15][CCount];
+		}
+
+		for (int CCount = 16; CCount < 24; CCount++) {
+			sendArr[CCount + 16] = visitedArr[0][CCount] * 128
+					+ visitedArr[1][CCount] * 64 + visitedArr[2][CCount] * 32
+					+ visitedArr[3][CCount] * 16 + visitedArr[4][CCount] * 8
+					+ visitedArr[5][CCount] * 4 + visitedArr[6][CCount] * 2
+					+ visitedArr[7][CCount];
+		}
+
+		for (int CCount = 16; CCount < 24; CCount++) {
+			sendArr[CCount + 24] = visitedArr[8][CCount] * 128
+					+ visitedArr[9][CCount] * 64 + visitedArr[10][CCount] * 32
+					+ visitedArr[11][CCount] * 16 + visitedArr[12][CCount] * 8
+					+ visitedArr[13][CCount] * 4 + visitedArr[14][CCount] * 2
+					+ visitedArr[15][CCount];
+		}
+		for (int CCount = 24; CCount < 32; CCount++) {
+			sendArr[CCount + 24] = visitedArr[0][CCount] * 128
+					+ visitedArr[1][CCount] * 64 + visitedArr[2][CCount] * 32
+					+ visitedArr[3][CCount] * 16 + visitedArr[4][CCount] * 8
+					+ visitedArr[5][CCount] * 4 + visitedArr[6][CCount] * 2
+					+ visitedArr[7][CCount];
+		}
+
+		for (int CCount = 24; CCount < 32; CCount++) {
+			sendArr[CCount + 32] = visitedArr[8][CCount] * 128
+					+ visitedArr[9][CCount] * 64 + visitedArr[10][CCount] * 32
+					+ visitedArr[11][CCount] * 16 + visitedArr[12][CCount] * 8
+					+ visitedArr[13][CCount] * 4 + visitedArr[14][CCount] * 2
+					+ visitedArr[15][CCount];
+		}
+	}
+
+	public void clickHandler(View target) {
+		switch (target.getId()) {
+		case R.id.penBtn:
+			ControlFlag = true;
+			break;
+		case R.id.eraseBtn:
+			ControlFlag = false;
+			break;
+		case R.id.trashBtn:
+			for (int i = 0; i < tipsHeight; i++)
+				for (int j = 0; j < tipsWidth; j++)
+					visitedArr[i][j] = 0;
+
+			arVertex.clear();
+			arVertexDel.clear();
+
+			for (int x = 0; x < tipsWidth; x++) {
+				for (int y = 0; y < tipsHeight; y++) {
+					Vertex vertex = new Vertex(x * TipsPartX, y * TipsPartY,
+							true);
+					arVertexDel.add(vertex);
+				}
+			}
+			m_tips_view.onBackgroundDraw();
+			m_tips_view.invalidate();
+
+			break;
+		case R.id.sendBtn:
+			inputSendArr();
+
+			Thread t;
+			t = new Thread(new Runnable() {
+
+				@Override
+				public void run() {
+					// TODO Auto-generated method stub
+					try {
+						ff = 1;
+						sendData(mEditSend.getText().toString());
+						Thread.sleep(1200);
+						ff = 2;
+						sendData(mEditSend.getText().toString());
+						Thread.sleep(1200);
+						ff = 3;
+						sendData(mEditSend.getText().toString());
+						Thread.sleep(1200);
+						ff = 4;
+						sendData(mEditSend.getText().toString());
+						
+						
+					} catch (InterruptedException e) {
+						e.printStackTrace();
+					}
+				}
+			});
+
+			t.start();
+			Toast.makeText(getApplicationContext(), "데이터를 전송하였습니다.", Toast.LENGTH_SHORT).show();
+			break;
+		case R.id.bluetoothBtn:
+			checkBluetooth();
+			pairedDevices = mBluetoothAdapter.getBondedDevices();
+			break;
+			
+		case R.id.fire1Btn:
+			try {
+				mOutputStream.write('b');
+				mOutputStream.flush();
+			} catch (IOException e) {e.printStackTrace();}
+			break;
+		case R.id.fire2Btn:
+			try {
+				mOutputStream.write('c');
+				mOutputStream.flush();
+			} catch (IOException e) {e.printStackTrace();}
+			break;
+		case R.id.fire3Btn:
+			try {
+				mOutputStream.write('d');
+				mOutputStream.flush();
+			} catch (IOException e) {e.printStackTrace();}
+			break;
+		}
+
+		chageBrushButtonImage(target.getId());
+		changeEffectButtonImage(target.getId());
+	}
+
+	public boolean onTouch(View v, MotionEvent event) {
+
+		switch (event.getAction()) {
+		case MotionEvent.ACTION_DOWN:
+		case MotionEvent.ACTION_MOVE:
+
+			int x = (int) event.getX();
+			int y = (int) event.getY();
+
+			Log.i("result", "x : " + x + " , y : " + y);
+			if (x < 0 || y < 0 || x > TipsViewX || y > TipsViewY)
+				return false;
+
+			x = x / TipsPartX;
+			y = y / TipsPartY;
+
+			if (x >= tipsWidth || y >= tipsHeight)
+				return false;
+
+			Log.i("result", "error : x - " + x + ", y - " + y);
+
+			visitedArr[y][x] = 1;
+
+			if (ControlFlag) {
+				Vertex vertex = new Vertex(x * TipsPartX, y * TipsPartY, true);
+				arVertex.add(vertex);
+				visitedArr[y][x] = 1;
+			} else {
+				Vertex vertex = new Vertex(x * TipsPartX, y * TipsPartY, true);
+				arVertexDel.add(vertex);
+				visitedArr[y][x] = 0;
+			}
+
+			break;
+		}
+		return false;
+	}
+
+	// ---------------------------------------------------------------------------------------------------
+	// Vertex Class
+	public class Vertex {
+		int x;
+		int y;
+		boolean draw;
+
+		public Vertex(int x, int y, boolean draw) {
+			this.x = x;
+			this.y = y;
+			this.draw = draw;
+		}
+	}
+
+	// ---------------------------------------------------------------------------------------------------
+
+	private void changeEffectButtonImage(int id) {
+		switch (id) {
+		case R.id.leftBtn:
+			leftBtn.setImageResource(R.drawable.left_on);
+			rightBtn.setImageResource(R.drawable.right_off);
+			fire1Btn.setImageResource(R.drawable.fire1_off);
+			fire2Btn.setImageResource(R.drawable.fire2_off);
+			fire3Btn.setImageResource(R.drawable.fire3_off);
+			break;
+		case R.id.rightBtn:
+			leftBtn.setImageResource(R.drawable.left_off);
+			rightBtn.setImageResource(R.drawable.right_on);
+			fire1Btn.setImageResource(R.drawable.fire1_off);
+			fire2Btn.setImageResource(R.drawable.fire2_off);
+			fire3Btn.setImageResource(R.drawable.fire3_off);
+			break;
+		case R.id.fire1Btn:
+			leftBtn.setImageResource(R.drawable.left_off);
+			rightBtn.setImageResource(R.drawable.right_off);
+			fire1Btn.setImageResource(R.drawable.fire1_on);
+			fire2Btn.setImageResource(R.drawable.fire2_off);
+			fire3Btn.setImageResource(R.drawable.fire3_off);
+			break;
+		case R.id.fire2Btn:
+			leftBtn.setImageResource(R.drawable.left_off);
+			rightBtn.setImageResource(R.drawable.right_off);
+			fire1Btn.setImageResource(R.drawable.fire1_off);
+			fire2Btn.setImageResource(R.drawable.fire2_on);
+			fire3Btn.setImageResource(R.drawable.fire3_off);
+			break;
+		case R.id.fire3Btn:
+			leftBtn.setImageResource(R.drawable.left_off);
+			rightBtn.setImageResource(R.drawable.right_off);
+			fire1Btn.setImageResource(R.drawable.fire1_off);
+			fire2Btn.setImageResource(R.drawable.fire2_off);
+			fire3Btn.setImageResource(R.drawable.fire3_on);
+			break;
+		}
+	}
+
+	private void chageBrushButtonImage(int id) {
+		switch (id) {
+		case R.id.penBtn:
+			penBtn.setImageResource(R.drawable.pencel_on);
+			eraseBtn.setImageResource(R.drawable.eraser_off);
+			break;
+		case R.id.eraseBtn:
+			penBtn.setImageResource(R.drawable.pencel_off);
+			eraseBtn.setImageResource(R.drawable.eraser_on);
+			break;
+		}
+	}
+
+	// ---------------------------------------------------------------------------------------------------
+
+	public static boolean getControlFlag() {
+		return ControlFlag;
+	}
+
+	public static ArrayList<Vertex> getArVertex() {
+		return arVertex;
+	}
+
+	public static ArrayList<Vertex> getArVertexDel() {
+		return arVertexDel;
+	}
+
+	public static int getVisitedArr(int x, int y) {
+		return visitedArr[x][y];
+	}
+
+}
